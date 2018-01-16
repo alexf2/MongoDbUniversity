@@ -1,0 +1,129 @@
+https://university.mongodb.com/courses/M101P/about
+
+https://university.mongodb.com/courses/M101N/about
+
+https://university.mongodb.com/courses/M102/about
+
+https://docs.mongodb.org/manual/?_ga=1.148480887.1987316336.1458685884
+
+
+
+1. Как найти на какие коллекции больше всего тратится времени
+	mongotop 5 (период опроса в секундах)
+
+2. Как включить логирование наиболее медленных запросов
+	mongodb --profile 1  --slowms 2  
+		(уровень verbosity 0 - off, 1 - only slow q, 2 - all q)
+	и выполнить db.system.profile.find().pretty(), чтобы увидеть лог
+	db.system.profile.find({millis: {$gt: 1}}).sort({ts:1}).pretty() - увидеть всё дольше 1ms
+	db.system.profile.find({ns:/test.foo/}).sort({ts:1}).pretty() - увидеть всё для одной коллекции
+
+	db.getProfilingStatus() - вернуть уровень vebosity
+	db.setProfilingLevel(1, 4) - установить verbosity и какие запросы логировать по длительности
+
+3. Как включить WiredTiger storage engine
+	mongod --storageEngine wiredTiger
+		так же, нужно взять отдельную директорию --dbpath
+
+
+4. Композитные индексы
+	(a,b,c) - можно искать по a или a,b или a,b,c, также частично по a,c (будет использоваться только a)
+
+	первым ключом надо ставить наиболее селективный
+	последовательность: equality fld --> sort fld --> range fld
+
+5. Как создать индекс
+	db.students.createIndex({student_id:1});
+	индекс внутри вложенного массива: db.students.createIndex({'scores.score': 1})
+
+	индексы на полях-массивах - многоключевые индексы
+
+	уникальный индекс: db.students.createIndex({student_id:1}, {unique: true});
+	sparse index: db.students.createIndex({student_id:1}, {unique: true, sparse: true}); - допускает отсуствие элементов
+однако, sparse index нельзя использовать для сортировки
+
+покрывающий индекс: надо смотреть в плане totalKeysExamined: 100 и totalDocsExamined: 0
+
+6. Как посмотреть план запроса
+	db.students.explain('executionStatus').find({name: {$gt: 'G'}});
+	или 'queryPlanner' - сокращенный вариант
+
+7. Поиск внутри вложенного массива
+	db.students.find({scores: {$elemMatch: {score: {$gt:70}, type: 'exam'}}})
+
+	db.students.find({$and: [{'scores.score': {$gt:70}}, {'scores.type': 'exam'}]}) - найдёт те документы, где кондишены исполняются в разных элементах массива, а не в одном
+
+8. Узнать размер индексов
+	db.students.stats()
+
+9. Посмотреть индексы
+	db.students.getIndexes()
+
+10. Как выполнить простой гроупинг
+	db.products.aggregate([{$group: {_id: "$category", num_products: {$sum:1}}}]);
+
+11. Получить коллекцию элементов по группе
+	db.zips.aggregate([{$group: {_id: "$city", postal_codes: {$addToSet: "$_id"}} }])
+
+12. Составной _id-ключ группировки
+	db.stuff.aggregate([{$group:
+		     {_id: {'moe':'$a', 'larry':'$b', 'curly':'$c'} } }])
+
+
+13. Как посчитать встречаемость тэгов:
+db.posts.aggregate([
+    /* unwind by tags */
+    {"$unwind":"$tags"},
+    /* now group by tags, counting each tag */
+    {"$group": 
+     {"_id":"$tags",
+      "count":{$sum:1}
+     }
+    },
+    /* sort by popularity */
+    {"$sort":{"count":-1}},
+    /* show me the top 10 */
+    {"$limit": 10},
+    /* change the name of _id to be tag */
+    {"$project":
+     {_id:0,
+      'tag':'$_id',
+      'count' : 1
+     }
+    }
+    ])
+
+14. Сделать count
+	db.orders.aggregate([{$group: {_id: null, count: {$sum: 1}}}])
+
+
+15. Как посчитать суммарную популяцию деревень в документе вида:
+
+	{"city": "ACMAR", "loc": [-86.51557, 33.584132], "pop": 6055, "state": "AL", "_id": "35004"}
+где у деревни 'city' начинается с цыфры.
+
+db.zips.aggregate([{$project: {fc: {$substr: ["$city", 0, 1]}, pop: 1}}, {$match: {fc: {$gte: '0', $lte: '9'} }}, {$group: {_id: null, total: {$sum: '$pop'}, cnt: {$sum: 1}}}])
+
+
+
+16. Найти между какими адресами больше всего прошло писем:
+
+db.messages.aggregate([
+	{$project: {id: '$_id', from: '$headers.From', to: '$headers.To'}}, 
+	{$unwind: '$to'}, 
+	{$group: {_id: '$id', from: {$first: '$from'}, to: {$addToSet: '$to'}}}, 
+	{$unwind: '$to'}, 
+	{$match: {from: {$in: ['susan.mara@enron.com', 'jeff.dasovich@enron.com']}, to: {$in: ['susan.mara@enron.com', 'jeff.dasovich@enron.com']}}}, 
+	{$group: {_id: {from: '$from', to: '$to'}, count: {$sum: 1} }} ])
+
+
+Добавить элемент в массив:
+
+db.messages.find({'headers.Message-ID': '<8147308.1075851042335.JavaMail.evans@thyme>'}).pretty()
+db.messages.update({"headers.Message-ID": "<8147308.1075851042335.JavaMail.evans@thyme>"}, {$push: {'headers.To': "mrpotatohead@mongodb.com"}})
+
+
+Апдейтить поле объекта в массиве по индексу:
+	db.posts.update({_id: ObjectId("5723a6c6c5baa721c09e28e9")}, {$inc: {'Comments.2.Likes': 1}})
+	db.posts.find({_id: ObjectId("5723a6c6c5baa721c09e28e9")}).pretty()
+
